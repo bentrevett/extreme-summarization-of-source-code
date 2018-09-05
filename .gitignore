@@ -108,3 +108,7 @@ venv.bak/
 
 #saves
 /.save
+/save
+/saves
+/.vector_cache
+/logs
