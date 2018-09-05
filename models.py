@@ -318,10 +318,10 @@ class CopyAttentionNetwork(nn.Module):
             
             #store prediction probability distribution in large tensor that holds 
             #predictions for each token in the function name   
-            outputs[i] = F.softmax(n,dim=1)
+            outputs[i] = (1 - lambd) * F.softmax(n,dim=1)
             
             #store copy probability distribution
-            kappas[i] = kappa
+            kappas[i] = lambd * kappa
 
             #with probability of `tf`, use the model's prediction of the next token
             #as the next token to feed into the model (to become the next h_t)
