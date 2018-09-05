@@ -20,9 +20,12 @@ def files_to_data(DIR, FILE):
             assert type(method['filename']) is str
             assert type(method['name']) is list
             assert type(method['tokens']) == list
-            method_name = [START_TOKEN] + method['name'] + [END_TOKEN] 
-            method_body = [x.lower() for x in method['tokens'] if (x != '<id>' and x != '</id>')]
-            while '%self%' in method_body:
+            method_name = [START_TOKEN] + method['name'] + [END_TOKEN] #add start and end of sequence token to method name
+            method_body = [x.lower() for x in method['tokens'] if (x != '<id>' and x != '</id>')] #lowercase and remove <id> tags
+            
+            #when the method name appears in the body it is represented by a %self% token
+            #we replace the %self% token with the actual method name
+            while '%self%' in method_body: 
                 self_idx = method_body.index('%self%')
                 method_body = method_body[:self_idx] + method['name'] + method_body[self_idx+1:]
         
