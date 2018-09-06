@@ -18,13 +18,13 @@ parser.add_argument('--checkpoints_dir', default='checkpoints', type=str, help='
 parser.add_argument('--no_cuda', action='store_true', help='Use this flag to stop using the GPU')
 parser.add_argument('--batch_size', default=64, type=int)
 parser.add_argument('--emb_dim', default=128, type=int)
-parser.add_argument('--k1', default=8, type=int)
-parser.add_argument('--k2', default=8, type=int)
-parser.add_argument('--w1', default=24, type=int)
-parser.add_argument('--w2', default=29, type=int)
-parser.add_argument('--w3', default=10, type=int)
-parser.add_argument('--dropout', default=0.5, type=float)
-parser.add_argument('--clip', default=1.0, type=float)
+parser.add_argument('--k1', default=32, type=int)
+parser.add_argument('--k2', default=16, type=int)
+parser.add_argument('--w1', default=18, type=int)
+parser.add_argument('--w2', default=19, type=int)
+parser.add_argument('--w3', default=2, type=int)
+parser.add_argument('--dropout', default=0.4, type=float)
+parser.add_argument('--clip', default=0.75, type=float)
 parser.add_argument('--epochs', default=100, type=int)
 
 args = parser.parse_args()
@@ -60,7 +60,7 @@ train_iter, test_iter = BucketIterator.splits(
     batch_size=args.batch_size, 
     sort_key=lambda x: len(x.name),
     repeat=False,
-    device=-1)
+    device=-1 if device == 'cpu' else None)
 
 #calculate these for the model
 vocab_size = len(BODY.vocab)
@@ -72,11 +72,16 @@ model = models.CopyAttentionNetwork(vocab_size, args.emb_dim, args.k1, args.k2, 
 #place on GPU if available
 model = model.to(device)
 
-#initialize optimizer, scheduler and loss function
-criterion = nn.BCELoss()
-optimizer = optim.RMSprop(model.parameters())
+#initialize optimizer
+optimizer = optim.RMSprop(model.parameters(), momentum=0.9, lr=1e-3)
 
-def train(model, iterator, optimizer, criterion, clip):
+#used to calculate the loss
+def logsumexp(x, y):
+    max = torch.where(x > y, x, y)
+    min = torch.where(x > y, y, x)
+    return torch.log1p(torch.exp(min - max)) + max
+
+def train(model, iterator, optimizer, clip):
     
     model.train()
     
@@ -84,35 +89,33 @@ def train(model, iterator, optimizer, criterion, clip):
     
     for i, batch in enumerate(iterator):
         
-        bodies = batch.body.to(device)
-        names = batch.name.to(device)
+        bodies = batch.body
+        names = batch.name
 
-        copy = torch.zeros(names.shape[0], names.shape[1], bodies.shape[0])
+        optimizer.zero_grad()
+
+        copy = torch.zeros(names.shape[0], names.shape[1], bodies.shape[0]).to(device)
        
-        _ones = torch.ones(bodies.shape[0])
-        _zeros = torch.zeros(bodies.shape[0])
+        _ones = torch.ones(bodies.shape[0]).to(device)
+        _zeros = torch.zeros(bodies.shape[0]).to(device)
 
-        for j, (name, body) in enumerate(zip(names, bodies)):
+        for j, name in enumerate(names):
             for k, token in enumerate(name):
                 copy[j,k,:] = torch.where(bodies[:,k] == token, _ones, _zeros)
         
-        optimizer.zero_grad()
-        
-        output, kappas = model(bodies, names)
+        output, kappas, lambdas = model(bodies, names)
        
         output = output[1:].view(-1, output.shape[2])
         kappas = kappas[1:].view(-1, kappas.shape[2])
-
-        names = names[1:].view(-1,1)
-        one_hot_names = torch.zeros(names.shape[0], output.shape[1])
-        one_hot_names.scatter_(1, names, 1)
+        lambdas = lambdas[1:].view(-1)
         copy = copy[1:].view(-1, copy.shape[2])
- 
-        pred = torch.cat((output, kappas), dim=1)
-        target = torch.cat((one_hot_names, copy), dim=1)
+        names = names[1:].view(-1,1)
 
-        loss = criterion(pred, target)
-        
+        use_copy = torch.log(lambdas + 10e-8) + torch.sum(copy * kappas, dim=1)
+        use_model = torch.log(1 - lambdas + 10e-8) + torch.gather(output, 1, names).squeeze(1)
+
+        loss = torch.mean(logsumexp(use_copy, use_model))
+
         loss.backward()
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
@@ -123,7 +126,7 @@ def train(model, iterator, optimizer, criterion, clip):
      
     return epoch_loss / len(iterator)
 
-def evaluate(model, iterator, criterion):
+def evaluate(model, iterator):
     
     model.eval()
     
@@ -133,32 +136,30 @@ def evaluate(model, iterator, criterion):
     
         for i, batch in enumerate(iterator):
 
-            bodies = batch.body.to(device)
-            names = batch.name.to(device)
-            
-            
-            copy = torch.zeros(names.shape[0], names.shape[1], bodies.shape[0])
-       
-            _ones = torch.ones(bodies.shape[0])
-            _zeros = torch.zeros(bodies.shape[0])
+            bodies = batch.body
+            names = batch.name
 
-            for j, (name, body) in enumerate(zip(names, bodies)):
+            copy = torch.zeros(names.shape[0], names.shape[1], bodies.shape[0]).to(device)
+       
+            _ones = torch.ones(bodies.shape[0]).to(device)
+            _zeros = torch.zeros(bodies.shape[0]).to(device)
+
+            for j, name in enumerate(names):
                 for k, token in enumerate(name):
                     copy[j,k,:] = torch.where(bodies[:,k] == token, _ones, _zeros)
 
-            output, kappas = model(bodies, names, 0) #set teacher forcing to zero
+            output, kappas, lambdas = model(bodies, names, 0) #set teacher forcing to zero
 
             output = output[1:].view(-1, output.shape[2])
             kappas = kappas[1:].view(-1, kappas.shape[2])
-
-            one_hot_names = torch.zeros(names.shape[0], output.shape[1])
-            one_hot_names.scatter_(1, names, 1)
+            lambdas = lambdas[1:].view(-1)
             copy = copy[1:].view(-1, copy.shape[2])
+            names = names[1:].view(-1,1)
 
-            pred = torch.cat((output, kappas), dim=1)
-            target = torch.cat((one_hot_names, copy), dim=1)
+            use_copy = torch.log(lambdas + 10e-8) + torch.sum(copy * kappas, dim=1)
+            use_model = torch.log(1 - lambdas + 10e-8) + torch.gather(output, 1, names).squeeze(1)
 
-            loss = criterion(pred, target)
+            loss = torch.mean(logsumexp(use_copy, use_model))
 
             epoch_loss += loss.item()
     
@@ -171,8 +172,8 @@ if not os.path.isdir(f'{args.checkpoints_dir}'):
     
 for epoch in range(args.epochs):
     
-    train_loss = train(model, train_iter, optimizer, criterion, args.clip)
-    test_loss = evaluate(model, test_iter, criterion)
+    train_loss = train(model, train_iter, optimizer, args.clip)
+    test_loss = evaluate(model, test_iter)
     
     if test_loss < best_test_loss:
         best_test_loss = test_loss

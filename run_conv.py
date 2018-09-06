@@ -35,8 +35,6 @@ assert os.path.exists(f'{args.data_dir}/{args.project}_test.json')
 #get available device
 device = torch.device('cuda' if (torch.cuda.is_available() and not args.no_cuda) else 'cpu')
 
-print(device)
-
 #set up fields
 BODY = Field()
 NAME = Field()
@@ -60,7 +58,8 @@ train_iter, test_iter = BucketIterator.splits(
     (train, test), 
     batch_size=args.batch_size, 
     sort_key=lambda x: len(x.name),
-    repeat=False)
+    repeat=False,
+    device=-1 if device == 'cpu' else None)
 
 #calculate these for the model
 vocab_size = len(BODY.vocab)
@@ -72,9 +71,9 @@ model = models.ConvAttentionNetwork(vocab_size, args.emb_dim, args.k1, args.k2, 
 #place on GPU if available
 model = model.to(device)
 
-#initialize optimizer, scheduler and loss function
+#initialize optimizer and loss function
 criterion = nn.CrossEntropyLoss(ignore_index = pad_idx)
-optimizer = optim.RMSprop(model.parameters())
+optimizer = optim.RMSprop(model.parameters(), momentum=0.9, lr=1e-3)
 
 def train(model, iterator, optimizer, criterion, clip):
     
@@ -84,8 +83,8 @@ def train(model, iterator, optimizer, criterion, clip):
     
     for i, batch in enumerate(iterator):
         
-        bodies = batch.body.to(device)
-        names = batch.name.to(device)
+        bodies = batch.body
+        names = batch.name
         
         optimizer.zero_grad()
         

@@ -71,7 +71,7 @@ class AttentionWeights(nn.Module):
         self.conv1 = nn.Conv1d(k2, 1, w3)
         self.do = nn.Dropout(dropout)
 
-    def forward(self, L_feat):
+    def forward(self, L_feat, log=False):
                 
         #L_feat = [batch size, k2, bodies len - w1 - w2 + 2]
         
@@ -83,7 +83,10 @@ class AttentionWeights(nn.Module):
         
         #x = [batch size, bodies len - w1 - w2 - w3 + 3]
         
-        x = F.softmax(x, dim=1)
+        if log:
+            x = F.log_softmax(x, dim=1)
+        else:
+            x = F.softmax(x, dim=1)
                 
         #x = [batch size, bodies len - w1 - w2 - w3 + 3]
                 
@@ -247,9 +250,14 @@ class CopyAttentionNetwork(nn.Module):
         #outputs = [names len, batch size, vocab dim]
         
         #stores the copy attention generated for each token
-        kappas = torch.zeros(names.shape[0], names.shape[1], bodies.shape[0])
+        kappas = torch.zeros(names.shape[0], names.shape[1], bodies.shape[0]).to(names.device)
 
         #kappas = [name len, batch size, bodies len]
+
+        #stores the prob of doing a copy for each token
+        lambdas = torch.zeros(names.shape[0], names.shape[1]).to(names.device)
+
+        #lambdas = [name len, batch size]
 
         #need to pad the function body so after it has been fed through
         #the convolutional layers it is the same size as the original function body
@@ -287,14 +295,16 @@ class CopyAttentionNetwork(nn.Module):
             #kappa is the probability that each token in the function body is copied
             #the second dimension is now equal to the original unpadded `bodies len` size
             alpha = self.attn_weights_alpha(L_feat)
-            kappa = self.attn_weights_kappa(L_feat)          
+            kappa = self.attn_weights_kappa(L_feat, log=True)          
         
             #alpha = [batch size, bodies len - w1 - w2 - w3 + 3]
             #kappa = [batch size, bodies len - w1 - w2 - w3 + 3]
 
             #calculate the weight of predicting by copying from body vs. predicting by guessing from vocab
-            lambd = F.max_pool1d(torch.sigmoid(self.do(self.conv1(L_feat))), alpha.shape[1]).squeeze(2)
+            _lambda = F.max_pool1d(torch.sigmoid(self.do(self.conv1(L_feat))), alpha.shape[1]).squeeze(2)
             
+            lambdas[i] = _lambda.permute(1, 0)
+
             #emb_b also contains the padding tokens so we slice these off
             emb_b_slice = emb_b.permute(1, 0, 2)[:, :bodies.shape[0], :]
 
@@ -318,10 +328,10 @@ class CopyAttentionNetwork(nn.Module):
             
             #store prediction probability distribution in large tensor that holds 
             #predictions for each token in the function name   
-            outputs[i] = (1 - lambd) * F.softmax(n,dim=1)
+            outputs[i] = F.log_softmax(n,dim=1)
             
             #store copy probability distribution
-            kappas[i] = lambd * kappa
+            kappas[i] = kappa
 
             #with probability of `tf`, use the model's prediction of the next token
             #as the next token to feed into the model (to become the next h_t)
@@ -339,4 +349,4 @@ class CopyAttentionNetwork(nn.Module):
                 
         #outputs = [name len, batch size, vocab dim]
                 
-        return outputs, kappas
+        return outputs, kappas, lambdas
