@@ -31,6 +31,7 @@ parser.add_argument('--dropout', default=0.25, type=float)
 parser.add_argument('--clip', default=1.0, type=float)
 parser.add_argument('--epochs', default=100, type=int)
 parser.add_argument('--seed', default=1234, type=int)
+parser.add_argument('--load', action='store_true', help='Use this to load model parameters, parameters should be saved as: {checkpoints_dir}/{project name}-conv-model.pt')
 
 args = parser.parse_args()
 
@@ -86,6 +87,9 @@ model = models.ConvAttentionNetwork(vocab_size, args.emb_dim, args.k1, args.k2, 
 #place on GPU if available
 model = model.to(device)
 
+if args.load:
+    model.load_state_dict(torch.load(f'{args.checkpoints_dir}/{args.project}-conv-model.pt'))
+
 #initialize optimizer and loss function
 criterion = nn.CrossEntropyLoss(ignore_index = pad_idx)
 optimizer = optim.RMSprop(model.parameters(), lr=1e-3, momentum=0.9)
@@ -103,7 +107,7 @@ def train(model, iterator, optimizer, criterion, clip):
     recall = 0
     f1 = 0
 
-    for i, batch in enumerate(iterator):
+    for _, batch in enumerate(iterator):
         
         bodies = batch.body
         names = batch.name
@@ -158,7 +162,7 @@ def evaluate(model, iterator, criterion):
     #ensures no gradients are calculated, speeds up calculations
     with torch.no_grad():
     
-        for i, batch in enumerate(iterator):
+        for _, batch in enumerate(iterator):
 
             bodies = batch.body.to(device)
             names = batch.name.to(device)
