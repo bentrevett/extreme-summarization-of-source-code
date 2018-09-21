@@ -29,18 +29,7 @@ def files_to_data(DIR, FILE):
                 self_idx = method_body.index('%self%')
                 method_body = method_body[:self_idx] + method['name'] + method_body[self_idx+1:]
        
-            #for each token in the name want its location within the body
-            locs = []
-            for name_token in method_name:
-                loc = []
-                for body_token in method_body:
-                    if name_token == body_token:
-                        loc.append(1)
-                    else:
-                        loc.append(0)
-                locs.append(loc) 
- 
-            data.append({'name':method_name, 'body':method_body, 'locs':locs})
+            data.append({'name': method_name, 'body': method_body})
 
     return data
 
